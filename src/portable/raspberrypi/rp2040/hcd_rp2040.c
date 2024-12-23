@@ -375,9 +375,9 @@ static void _hw_endpoint_init(struct hw_endpoint *ep, uint8_t dev_addr, uint8_t 
 //--------------------------------------------------------------------+
 // HCD API
 //--------------------------------------------------------------------+
-bool hcd_init(uint8_t rhport, const tusb_rhport_init_t* rh_init) {
+bool hcd_init(uint8_t rhport)
+{
   (void) rhport;
-  (void) rh_init;
   pico_trace("hcd_init %d\n", rhport);
   assert(rhport == 0);
 

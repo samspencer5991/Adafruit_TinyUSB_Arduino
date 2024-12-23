@@ -56,8 +56,8 @@
  *   #define TU_VERIFY(cond)                  if(cond) return false;
  *   #define TU_VERIFY(cond,ret)              if(cond) return ret;
  *
- *   #define TU_ASSERT(cond)                  if(cond) {TU_MESS_FAILED(); TU_BREAKPOINT(), return false;}
- *   #define TU_ASSERT(cond,ret)              if(cond) {TU_MESS_FAILED(); TU_BREAKPOINT(), return ret;}
+ *   #define TU_ASSERT(cond)                  if(cond) {_MESS_FAILED(); TU_BREAKPOINT(), return false;}
+ *   #define TU_ASSERT(cond,ret)              if(cond) {_MESS_FAILED(); TU_BREAKPOINT(), return ret;}
  *------------------------------------------------------------------*/
 
 #ifdef __cplusplus
@@ -70,9 +70,9 @@
 
 #if CFG_TUSB_DEBUG
   #include <stdio.h>
-  #define TU_MESS_FAILED()    tu_printf("%s %d: ASSERT FAILED\r\n", __func__, __LINE__)
+  #define _MESS_FAILED()    tu_printf("%s %d: ASSERT FAILED\r\n", __func__, __LINE__)
 #else
-  #define TU_MESS_FAILED() do {} while (0)
+  #define _MESS_FAILED() do {} while (0)
 #endif
 
 // Halt CPU (breakpoint) when hitting error, only apply for Cortex M3, M4, M7, M33. M55
@@ -93,6 +93,9 @@
   #define TU_BREAKPOINT() do {} while (0)
 #endif
 
+// Helper to implement optional parameter for TU_VERIFY Macro family
+#define _GET_3RD_ARG(arg1, arg2, arg3, ...)        arg3
+
 /*------------------------------------------------------------------*/
 /* TU_VERIFY
  * - TU_VERIFY_1ARGS : return false if failed
@@ -106,7 +109,7 @@
 #define TU_VERIFY_1ARGS(_cond)         TU_VERIFY_DEFINE(_cond, false)
 #define TU_VERIFY_2ARGS(_cond, _ret)   TU_VERIFY_DEFINE(_cond, _ret)
 
-#define TU_VERIFY(...)                 TU_GET_3RD_ARG(__VA_ARGS__, TU_VERIFY_2ARGS, TU_VERIFY_1ARGS, _dummy)(__VA_ARGS__)
+#define TU_VERIFY(...)                 _GET_3RD_ARG(__VA_ARGS__, TU_VERIFY_2ARGS, TU_VERIFY_1ARGS, _dummy)(__VA_ARGS__)
 
 /*------------------------------------------------------------------*/
 /* ASSERT
@@ -116,14 +119,14 @@
  *------------------------------------------------------------------*/
 #define TU_ASSERT_DEFINE(_cond, _ret)                                 \
   do {                                                                \
-    if ( !(_cond) ) { TU_MESS_FAILED(); TU_BREAKPOINT(); return _ret; } \
+    if ( !(_cond) ) { _MESS_FAILED(); TU_BREAKPOINT(); return _ret; } \
   } while(0)
 
 #define TU_ASSERT_1ARGS(_cond)         TU_ASSERT_DEFINE(_cond, false)
 #define TU_ASSERT_2ARGS(_cond, _ret)   TU_ASSERT_DEFINE(_cond, _ret)
 
 #ifndef TU_ASSERT
-#define TU_ASSERT(...)                 TU_GET_3RD_ARG(__VA_ARGS__, TU_ASSERT_2ARGS, TU_ASSERT_1ARGS, _dummy)(__VA_ARGS__)
+#define TU_ASSERT(...)                 _GET_3RD_ARG(__VA_ARGS__, TU_ASSERT_2ARGS, TU_ASSERT_1ARGS, _dummy)(__VA_ARGS__)
 #endif
 
 #ifdef __cplusplus

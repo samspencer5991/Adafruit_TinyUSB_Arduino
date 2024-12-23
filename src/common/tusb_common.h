@@ -79,7 +79,7 @@
 
 //--------------------------------------------------------------------+
 // Optional API implemented by application if needed
-// TODO move to a more obvious place/file
+// TODO move to a more ovious place/file
 //--------------------------------------------------------------------+
 
 // flush data cache

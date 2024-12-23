@@ -155,7 +155,9 @@ size_t Adafruit_USBH_CDC::write(uint8_t ch) { return write(&ch, 1); }
 
 size_t Adafruit_USBH_CDC::write(const uint8_t *buffer, size_t size) {
   size_t remain = size;
-  while (remain && tuh_cdc_mounted(_idx)) {
+  while (remain && tuh_cdc_mounted(_idx))
+  {
+	//Serial0.println("writing");
     size_t wrcount = tuh_cdc_write(_idx, buffer, remain);
     remain -= wrcount;
     buffer += wrcount;

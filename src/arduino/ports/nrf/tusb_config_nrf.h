@@ -63,7 +63,6 @@ extern "C" {
 // DEVICE CONFIGURATION
 //--------------------------------------------------------------------
 
-#if CFG_TUD_ENABLED
 #define CFG_TUD_ENDPOINT0_SIZE 64
 
 //------------- CLASS -------------//
@@ -115,13 +114,9 @@ extern "C" {
 #define CFG_TUD_VENDOR_TX_BUFSIZE 64
 #endif
 
-#endif
-
 //--------------------------------------------------------------------
 // Host Configuration
 //--------------------------------------------------------------------
-
-#if CFG_TUH_ENABLED
 
 // Size of buffer to hold descriptors and other data used for enumeration
 #define CFG_TUH_ENUMERATION_BUFSIZE 256
@@ -162,8 +157,6 @@ extern "C" {
 // This need Pico-PIO-USB at least 0.5.1
 #define CFG_TUH_CDC_LINE_CODING_ON_ENUM                                        \
   { 115200, CDC_LINE_CONDING_STOP_BITS_1, CDC_LINE_CODING_PARITY_NONE, 8 }
-
-#endif
 
 #ifdef __cplusplus
 }

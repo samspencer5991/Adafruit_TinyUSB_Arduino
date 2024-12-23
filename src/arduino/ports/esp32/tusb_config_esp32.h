@@ -98,7 +98,7 @@ extern "C" {
 #endif
 
 // Size of buffer to hold descriptors and other data used for enumeration
-#define CFG_TUH_ENUMERATION_BUFSIZE 256
+#define CFG_TUH_ENUMERATION_BUFSIZE 2048
 
 // Number of hub devices
 #define CFG_TUH_HUB 1

@@ -173,14 +173,14 @@ enum {
 };
 
 enum {
-  MAX_NAK_DEFAULT = 1 // Number of NAK per endpoint per usb frame to save CPU/SPI bus usage
+  MAX_NAK_DEFAULT = 1 // Number of NAK per endpoint per usb frame
 };
 
 enum {
   EP_STATE_IDLE        = 0,
   EP_STATE_COMPLETE    = 1,
   EP_STATE_ABORTING    = 2,
-  EP_STATE_ATTEMPT_1   = 3, // Number of attempts to transfer in a frame. Incremented after each NAK
+  EP_STATE_ATTEMPT_1   = 3, // pending 1st attempt
   EP_STATE_ATTEMPT_MAX = 15
 };
 
@@ -188,20 +188,17 @@ enum {
 //
 //--------------------------------------------------------------------+
 
-typedef struct TU_ATTR_PACKED {
-  uint8_t ep_num   : 4;
-  uint8_t is_setup : 1;
-  uint8_t is_out   : 1;
-  uint8_t is_iso   : 1;
-} hxfr_bm_t;
-
-TU_VERIFY_STATIC(sizeof(hxfr_bm_t) == 1, "size is not correct");
-
 typedef struct {
   uint8_t daddr;
 
-  union {
-    hxfr_bm_t hxfr_bm;
+  union { ;
+    struct TU_ATTR_PACKED {
+      uint8_t ep_num   : 4;
+      uint8_t is_setup : 1;
+      uint8_t is_out   : 1;
+      uint8_t is_iso   : 1;
+    }hxfr_bm;
+
     uint8_t hxfr;
   };
 
@@ -227,24 +224,9 @@ typedef struct {
   uint8_t hien;
   uint8_t mode;
   uint8_t peraddr;
-  union {
-    hxfr_bm_t hxfr_bm;
-    uint8_t hxfr;
-  };
+  uint8_t hxfr;
 
-  // owner of data in SNDFIFO, for retrying NAKed without re-writing to FIFO
-  struct {
-    uint8_t daddr;
-    uint8_t hxfr;
-  }sndfifo_owner;
-
-#if CFG_TUSB_MCU == OPT_MCU_RP2040
-  // currently has undefined reference to `__atomic_test_and_set' with rp2040 on Arduino with gcc 14.2
-  // temporarily use native semaphore instead. TODO rework osal semaphore/mutex later on
-  semaphore_t busy; // busy transferring
-#else
   atomic_flag busy; // busy transferring
-#endif
 
 #if OSAL_MUTEX_REQUIRED
   OSAL_MUTEX_DEF(spi_mutexdef);
@@ -262,25 +244,6 @@ static tuh_configure_max3421_t _tuh_cfg = {
     .cpuctl = 0, // default: INT pulse width = 10.6 us
     .pinctl = 0, // default: negative edge interrupt
 };
-
-#if CFG_TUSB_MCU == OPT_MCU_RP2040
-TU_ATTR_ALWAYS_INLINE static inline bool usb_xfer_test_and_set(void) {
-  return !sem_try_acquire(&_hcd_data.busy);
-}
-
-TU_ATTR_ALWAYS_INLINE static inline void usb_xfer_clear(void) {
-  sem_release(&_hcd_data.busy);
-}
-
-#else
-TU_ATTR_ALWAYS_INLINE static inline bool usb_xfer_test_and_set(void) {
-  return atomic_flag_test_and_set(&_hcd_data.busy);
-}
-
-TU_ATTR_ALWAYS_INLINE static inline void usb_xfer_clear(void) {
-  atomic_flag_clear(&_hcd_data.busy);
-}
-#endif
 
 //--------------------------------------------------------------------+
 // API: SPI transfer with MAX3421E
@@ -359,9 +322,33 @@ bool tuh_max3421_reg_write(uint8_t rhport, uint8_t reg, uint8_t data, bool in_is
   return ret;
 }
 
-//--------------------------------------------------------------------
-// Register helper
-//--------------------------------------------------------------------
+static void fifo_write(uint8_t rhport, uint8_t reg, uint8_t const * buffer, uint16_t len, bool in_isr) {
+  uint8_t hirq;
+  reg |= CMDBYTE_WRITE;
+
+  max3421_spi_lock(rhport, in_isr);
+
+  tuh_max3421_spi_xfer_api(rhport, &reg, &hirq, 1);
+  _hcd_data.hirq = hirq;
+  tuh_max3421_spi_xfer_api(rhport, buffer, NULL, len);
+
+  max3421_spi_unlock(rhport, in_isr);
+}
+
+static void fifo_read(uint8_t rhport, uint8_t * buffer, uint16_t len, bool in_isr) {
+  uint8_t hirq;
+  uint8_t const reg = RCVVFIFO_ADDR;
+
+  max3421_spi_lock(rhport, in_isr);
+
+  tuh_max3421_spi_xfer_api(rhport, &reg, &hirq, 1);
+  _hcd_data.hirq = hirq;
+  tuh_max3421_spi_xfer_api(rhport, NULL, buffer, len);
+
+  max3421_spi_unlock(rhport, in_isr);
+}
+
+//------------- register write helper -------------//
 TU_ATTR_ALWAYS_INLINE static inline void hirq_write(uint8_t rhport, uint8_t data, bool in_isr) {
   reg_write(rhport, HIRQ_ADDR, data, in_isr);
   // HIRQ write 1 is clear
@@ -393,47 +380,6 @@ TU_ATTR_ALWAYS_INLINE static inline void hxfr_write(uint8_t rhport, uint8_t data
 TU_ATTR_ALWAYS_INLINE static inline void sndbc_write(uint8_t rhport, uint8_t data, bool in_isr) {
   _hcd_data.sndbc = data;
   reg_write(rhport, SNDBC_ADDR, data, in_isr);
-}
-
-//--------------------------------------------------------------------
-// FIFO access (receive, send, setup)
-//--------------------------------------------------------------------
-static void hwfifo_write(uint8_t rhport, uint8_t reg, const uint8_t* buffer, uint8_t len, bool in_isr) {
-  uint8_t hirq;
-  reg |= CMDBYTE_WRITE;
-
-  max3421_spi_lock(rhport, in_isr);
-
-  tuh_max3421_spi_xfer_api(rhport, &reg, &hirq, 1);
-  _hcd_data.hirq = hirq;
-  tuh_max3421_spi_xfer_api(rhport, buffer, NULL, len);
-
-  max3421_spi_unlock(rhport, in_isr);
-}
-
-// Write to SNDFIFO if len > 0 and update SNDBC
-TU_ATTR_ALWAYS_INLINE static inline void hwfifo_send(uint8_t rhport, const uint8_t* buffer, uint8_t len, bool in_isr) {
-  if (len) {
-    hwfifo_write(rhport, SNDFIFO_ADDR, buffer, len, in_isr);
-  }
-  sndbc_write(rhport, len, in_isr);
-}
-
-TU_ATTR_ALWAYS_INLINE static inline void hwfifo_setup(uint8_t rhport, const uint8_t* buffer, bool in_isr) {
-  hwfifo_write(rhport, SUDFIFO_ADDR, buffer, 8, in_isr);
-}
-
-static void hwfifo_receive(uint8_t rhport, uint8_t * buffer, uint16_t len, bool in_isr) {
-  uint8_t hirq;
-  uint8_t const reg = RCVVFIFO_ADDR;
-
-  max3421_spi_lock(rhport, in_isr);
-
-  tuh_max3421_spi_xfer_api(rhport, &reg, &hirq, 1);
-  _hcd_data.hirq = hirq;
-  tuh_max3421_spi_xfer_api(rhport, NULL, buffer, len);
-
-  max3421_spi_unlock(rhport, in_isr);
 }
 
 //--------------------------------------------------------------------+
@@ -476,7 +422,7 @@ static void free_ep(uint8_t daddr) {
   }
 }
 
-// Check if endpoint has a queued transfer and not reach max NAK in this frame
+// Check if endpoint has an queued transfer and not reach max NAK
 TU_ATTR_ALWAYS_INLINE static inline bool is_ep_pending(max3421_ep_t const * ep) {
   uint8_t const state = ep->state;
   return ep->packet_size && (state >= EP_STATE_ATTEMPT_1) &&
@@ -524,8 +470,8 @@ bool hcd_configure(uint8_t rhport, uint32_t cfg_id, const void* cfg_param) {
 }
 
 // Initialize controller to host mode
-bool hcd_init(uint8_t rhport, const tusb_rhport_init_t* rh_init) {
-  (void) rh_init;
+bool hcd_init(uint8_t rhport) {
+  (void) rhport;
 
   tuh_max3421_int_api(rhport, false);
 
@@ -535,10 +481,6 @@ bool hcd_init(uint8_t rhport, const tusb_rhport_init_t* rh_init) {
 
   tu_memclr(&_hcd_data, sizeof(_hcd_data));
   _hcd_data.peraddr = 0xff; // invalid
-
-#if CFG_TUSB_MCU == OPT_MCU_RP2040
-  sem_init(&_hcd_data.busy, 1, 1);
-#endif
 
 #if OSAL_MUTEX_REQUIRED
   _hcd_data.spi_mutex = osal_mutex_create(&_hcd_data.spi_mutexdef);
@@ -550,7 +492,6 @@ bool hcd_init(uint8_t rhport, const tusb_rhport_init_t* rh_init) {
   reg_write(rhport, PINCTL_ADDR, _tuh_cfg.pinctl | PINCTL_FDUPSPI, false);
 
   // v1 is 0x01, v2 is 0x12, v3 is 0x13
-  // Note: v1 and v2 has host OUT errata whose workaround is not implemented in this driver
   uint8_t const revision = reg_read(rhport, REVISION_ADDR, false);
   TU_LOG2_HEX(revision);
   TU_ASSERT(revision == 0x01 || revision == 0x12 || revision == 0x13, false);
@@ -596,10 +537,6 @@ bool hcd_deinit(uint8_t rhport) {
   osal_mutex_delete(_hcd_data.spi_mutex);
   _hcd_data.spi_mutex = NULL;
   #endif
-
-#if CFG_TUSB_MCU == OPT_MCU_RP2040
-  sem_reset(&_hcd_data.busy, 1);
-#endif
 
   return true;
 }
@@ -683,45 +620,22 @@ bool hcd_edpt_open(uint8_t rhport, uint8_t daddr, tusb_desc_endpoint_t const * e
   return true;
 }
 
-/* The microcontroller repeatedly writes the SNDFIFO register R2 to load the FIFO with up to 64 data bytes.
- * Then the microcontroller writes the SNDBC register, which this does three things:
- * 1. Tells the MAX3421E SIE (Serial Interface Engine) how many bytes in the FIFO to send.
- * 2. Connects the SNDFIFO and SNDBC register to the USB logic for USB transmission.
- * 3. Clears the SNDBAVIRQ interrupt flag. If the second FIFO is available for µC loading, the SNDBAVIRQ immediately re-asserts.
-
-                                               +-----------+
-                                           --->| SNDBC-A   |
-                                          /    | SNDFIFO-A |
-                                         /     +-----------+
-      +------+       +-------------+    /                              +----------+
-      | MCU  |------>| R2: SNDFIFO |----     << Write R7 Flip >>    ---| MAX3241E |
-      |(hcd) |       | R7: SNDBC   |                               /   |   SIE    |
-      +------+       +-------------+                              /    +----------+
-                                              +-----------+      /
-                                               | SNDBC-B   |    /
-                                               | SNDFIFO-B |<---
-                                               +-----------+
-  Note: xact_out() is called when starting a new transfer, continue a transfer (isr) or retry a transfer (NAK)
-        For NAK retry, we do not need to write to FIFO or SNDBC register again.
-*/
 static void xact_out(uint8_t rhport, max3421_ep_t *ep, bool switch_ep, bool in_isr) {
   // Page 12: Programming BULK-OUT Transfers
-  // TODO: double buffering for ISO transfer
+  // TODO double buffered
   if (switch_ep) {
     peraddr_write(rhport, ep->daddr, in_isr);
-    const uint8_t hctl = (ep->data_toggle ? HCTL_SNDTOG1 : HCTL_SNDTOG0);
+
+    uint8_t const hctl = (ep->data_toggle ? HCTL_SNDTOG1 : HCTL_SNDTOG0);
     reg_write(rhport, HCTL_ADDR, hctl, in_isr);
   }
 
-  // Only write to sndfifo and sdnbc register if it is not a NAKed retry
-  if (!(ep->daddr == _hcd_data.sndfifo_owner.daddr && ep->hxfr == _hcd_data.sndfifo_owner.hxfr)) {
-    // skip SNDBAV IRQ check, overwrite sndfifo if needed
-    const uint8_t xact_len = (uint8_t) tu_min16(ep->total_len - ep->xferred_len, ep->packet_size);
-    hwfifo_send(rhport, ep->buf, xact_len, in_isr);
+  uint8_t const xact_len = (uint8_t) tu_min16(ep->total_len - ep->xferred_len, ep->packet_size);
+  TU_ASSERT(_hcd_data.hirq & HIRQ_SNDBAV_IRQ,);
+  if (xact_len) {
+    fifo_write(rhport, SNDFIFO_ADDR, ep->buf, xact_len, in_isr);
   }
-  _hcd_data.sndfifo_owner.daddr = ep->daddr;
-  _hcd_data.sndfifo_owner.hxfr = ep->hxfr;
-
+  sndbc_write(rhport, xact_len, in_isr);
   hxfr_write(rhport, ep->hxfr, in_isr);
 }
 
@@ -739,7 +653,7 @@ static void xact_in(uint8_t rhport, max3421_ep_t *ep, bool switch_ep, bool in_is
 
 static void xact_setup(uint8_t rhport, max3421_ep_t *ep, bool in_isr) {
   peraddr_write(rhport, ep->daddr, in_isr);
-  hwfifo_setup(rhport, ep->buf, in_isr);
+  fifo_write(rhport, SUDFIFO_ADDR, ep->buf, 8, in_isr);
   hxfr_write(rhport, HXFR_SETUP, in_isr);
 }
 
@@ -753,7 +667,7 @@ static void xact_generic(uint8_t rhport, max3421_ep_t *ep, bool switch_ep, bool 
 
     // status
     if (ep->buf == NULL || ep->total_len == 0) {
-      const uint8_t hxfr = (uint8_t) (HXFR_HS | (ep->hxfr & HXFR_OUT_NIN));
+      uint8_t const hxfr = (uint8_t) (HXFR_HS | (ep->hxfr & HXFR_OUT_NIN));
       peraddr_write(rhport, ep->daddr, in_isr);
       hxfr_write(rhport, hxfr, in_isr);
       return;
@@ -787,7 +701,7 @@ bool hcd_edpt_xfer(uint8_t rhport, uint8_t daddr, uint8_t ep_addr, uint8_t * buf
   ep->state = EP_STATE_ATTEMPT_1;
 
   // carry out transfer if not busy
-  if (!usb_xfer_test_and_set()) {
+  if (!atomic_flag_test_and_set(&_hcd_data.busy)) {
     xact_generic(rhport, ep, true, false);
   }
 
@@ -824,7 +738,7 @@ bool hcd_setup_send(uint8_t rhport, uint8_t daddr, uint8_t const setup_packet[8]
   ep->state = EP_STATE_ATTEMPT_1;
 
   // carry out transfer if not busy
-  if (!usb_xfer_test_and_set()) {
+  if (!atomic_flag_test_and_set(&_hcd_data.busy)) {
     xact_setup(rhport, ep, false);
   }
 
@@ -909,16 +823,16 @@ static void xfer_complete_isr(uint8_t rhport, max3421_ep_t *ep, xfer_result_t re
     xact_generic(rhport, next_ep, true, in_isr);
   }else {
     // no more pending
-    usb_xfer_clear();
+    atomic_flag_clear(&_hcd_data.busy);
   }
 }
 
 static void handle_xfer_done(uint8_t rhport, bool in_isr) {
-  const uint8_t hrsl = reg_read(rhport, HRSL_ADDR, in_isr);
-  const uint8_t hresult = hrsl & HRSL_RESULT_MASK;
-  const uint8_t ep_num = _hcd_data.hxfr_bm.ep_num;
-  const uint8_t hxfr_type = _hcd_data.hxfr & 0xf0;
-  const uint8_t ep_dir = ((hxfr_type & HXFR_SETUP) || (hxfr_type & HXFR_OUT_NIN)) ? 0 : 1;
+  uint8_t const hrsl = reg_read(rhport, HRSL_ADDR, in_isr);
+  uint8_t const hresult = hrsl & HRSL_RESULT_MASK;
+  uint8_t const ep_num = _hcd_data.hxfr & HXFR_EPNUM_MASK;
+  uint8_t const hxfr_type = _hcd_data.hxfr & 0xf0;
+  uint8_t const ep_dir = ((hxfr_type & HXFR_SETUP) || (hxfr_type & HXFR_OUT_NIN)) ? 0 : 1;
 
   max3421_ep_t *ep = find_opened_ep(_hcd_data.peraddr, ep_num, ep_dir);
   TU_VERIFY(ep, );
@@ -933,8 +847,7 @@ static void handle_xfer_done(uint8_t rhport, bool in_isr) {
           // control endpoint -> retry immediately and return
           hxfr_write(rhport, _hcd_data.hxfr, in_isr);
           return;
-        }
-        if (EP_STATE_ATTEMPT_1 <= ep->state && ep->state < EP_STATE_ATTEMPT_MAX) {
+        } else if (EP_STATE_ATTEMPT_1 <= ep->state && ep->state < EP_STATE_ATTEMPT_MAX) {
           ep->state++;
         }
       }
@@ -945,10 +858,11 @@ static void handle_xfer_done(uint8_t rhport, bool in_isr) {
         hxfr_write(rhport, _hcd_data.hxfr, in_isr);
       } else if (next_ep) {
         // switch to next pending endpoint
+        // TODO could have issue with double buffered if not clear previously out data
         xact_generic(rhport, next_ep, true, in_isr);
       } else {
         // no more pending in this frame -> clear busy
-        usb_xfer_clear();
+        atomic_flag_clear(&_hcd_data.busy);
       }
       return;
 
@@ -987,15 +901,11 @@ static void handle_xfer_done(uint8_t rhport, bool in_isr) {
     if (ep->state == EP_STATE_COMPLETE) {
       xfer_complete_isr(rhport, ep, xfer_result, hrsl, in_isr);
     }else {
-      hxfr_write(rhport, _hcd_data.hxfr, in_isr); // more to transfer
+      // more to transfer
+      hxfr_write(rhport, _hcd_data.hxfr, in_isr);
     }
   } else {
     // SETUP or OUT transfer
-
-    // clear sndfifo owner since data is sent
-    _hcd_data.sndfifo_owner.daddr = 0xff;
-    _hcd_data.sndfifo_owner.hxfr = 0xff;
-
     uint8_t xact_len;
 
     if (hxfr_type & HXFR_SETUP) {
@@ -1012,7 +922,8 @@ static void handle_xfer_done(uint8_t rhport, bool in_isr) {
     if (xact_len < ep->packet_size || ep->xferred_len >= ep->total_len) {
       xfer_complete_isr(rhport, ep, xfer_result, hrsl, in_isr);
     } else {
-      xact_out(rhport, ep, false, in_isr); // more to transfer
+      // more to transfer
+      xact_out(rhport, ep, false, in_isr);
     }
   }
 }
@@ -1059,7 +970,7 @@ void hcd_int_handler(uint8_t rhport, bool in_isr) {
     }
 
     // start usb transfer if not busy
-    if (ep_retry != NULL && !usb_xfer_test_and_set()) {
+    if (ep_retry != NULL && !atomic_flag_test_and_set(&_hcd_data.busy)) {
       xact_generic(rhport, ep_retry, true, in_isr);
     }
   }
@@ -1072,16 +983,16 @@ void hcd_int_handler(uint8_t rhport, bool in_isr) {
   // not call this handler again. So we need to loop until all IRQ are cleared
   while (hirq & (HIRQ_RCVDAV_IRQ | HIRQ_HXFRDN_IRQ)) {
     if (hirq & HIRQ_RCVDAV_IRQ) {
-      const uint8_t ep_num = _hcd_data.hxfr_bm.ep_num;
+      uint8_t const ep_num = _hcd_data.hxfr & HXFR_EPNUM_MASK;
       max3421_ep_t* ep = find_opened_ep(_hcd_data.peraddr, ep_num, 1);
       uint8_t xact_len = 0;
 
       // RCVDAV_IRQ can trigger 2 times (dual buffered)
       while (hirq & HIRQ_RCVDAV_IRQ) {
-        const uint8_t rcvbc = reg_read(rhport, RCVBC_ADDR, in_isr);
+        uint8_t rcvbc = reg_read(rhport, RCVBC_ADDR, in_isr);
         xact_len = (uint8_t) tu_min16(rcvbc, ep->total_len - ep->xferred_len);
         if (xact_len) {
-          hwfifo_receive(rhport, ep->buf, xact_len, in_isr);
+          fifo_read(rhport, ep->buf, xact_len, in_isr);
           ep->buf += xact_len;
           ep->xferred_len += xact_len;
         }

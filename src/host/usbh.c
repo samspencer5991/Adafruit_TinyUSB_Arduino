@@ -383,13 +383,11 @@ bool tuh_inited(void) {
   return _usbh_controller != TUSB_INDEX_INVALID_8;
 }
 
-bool tuh_rhport_init(uint8_t rhport, const tusb_rhport_init_t* rh_init) {
-  if (tuh_rhport_is_active(rhport)) {
-    return true; // skip if already initialized
-  }
+bool tuh_init(uint8_t rhport) {
+  // skip if already initialized
+  if (tuh_rhport_is_active(rhport)) return true;
 
-  TU_LOG_USBH("USBH init on controller %u, speed = %s\r\n", rhport,
-    rh_init->speed == TUSB_SPEED_HIGH ? "High" : "Full");
+  TU_LOG_USBH("USBH init on controller %u\r\n", rhport);
 
   // Init host stack if not already
   if (!tuh_inited()) {
@@ -435,8 +433,8 @@ bool tuh_rhport_init(uint8_t rhport, const tusb_rhport_init_t* rh_init) {
   }
 
   // Init host controller
-  _usbh_controller = rhport;
-  TU_ASSERT(hcd_init(rhport, rh_init));
+  _usbh_controller = rhport;;
+  TU_ASSERT(hcd_init(rhport));
   hcd_int_enable(rhport);
 
   return true;
@@ -492,7 +490,7 @@ bool tuh_task_event_ready(void) {
     int main(void)
     {
       application_init();
-      tusb_init(0, TUSB_ROLE_HOST);
+      tusb_init();
 
       while(1) // the mainloop
       {
@@ -1146,7 +1144,7 @@ bool tuh_interface_set(uint8_t daddr, uint8_t itf_num, uint8_t itf_alt,
   TU_LOG_USBH("Set Interface %u Alternate %u\r\n", itf_num, itf_alt);
   tusb_control_request_t const request = {
       .bmRequestType_bit = {
-          .recipient = TUSB_REQ_RCPT_INTERFACE,
+          .recipient = TUSB_REQ_RCPT_DEVICE,
           .type      = TUSB_REQ_TYPE_STANDARD,
           .direction = TUSB_DIR_OUT
       },
@@ -1454,9 +1452,6 @@ static void process_enumeration(tuh_xfer_t* xfer) {
       break;
 
     case ENUM_GET_DEVICE_DESC: {
-      // Allow 2ms for address recovery time, Ref USB Spec 9.2.6.3
-      osal_task_delay(2);
-
       uint8_t const new_addr = (uint8_t) tu_le16toh(xfer->setup->wValue);
 
       usbh_device_t* new_dev = get_device(new_addr);
