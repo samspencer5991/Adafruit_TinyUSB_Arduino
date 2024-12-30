@@ -165,6 +165,7 @@ size_t Adafruit_USBH_CDC::write(const uint8_t *buffer, size_t size) {
     // Write FIFO is full, run host task while wait for space become available
     if (remain) {
       tuh_task();
+		//delay(10);
     }
   }
 
