@@ -241,7 +241,11 @@ bool Adafruit_USBD_Device::begin(uint8_t rhport) {
   _desc_device.bDeviceProtocol = MISC_PROTOCOL_IAD;
 
 #if defined(ARDUINO_ARCH_ESP32)
-#if ARDUINO_USB_CDC_ON_BOOT && !ARDUINO_USB_MODE
+// CHANGE: removed ARDUINO_USB_CDC_ON_BOOT requirement so CDC is always added
+// in OTG device mode regardless of CDC_ON_BOOT flag. Required for
+// ARDUINO_USB_CDC_ON_BOOT=0 + explicit TinyUSBDevice.begin(0) in setup().
+// TO REVERT: restore to: #if ARDUINO_USB_CDC_ON_BOOT && !ARDUINO_USB_MODE
+#if !ARDUINO_USB_MODE
   // follow USBCDC cdc descriptor
   uint8_t itfnum = allocInterface(2);
   uint8_t strid = addStringDescriptor("TinyUSB Serial");

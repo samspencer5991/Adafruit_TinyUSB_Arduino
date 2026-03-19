@@ -101,10 +101,12 @@ extern "C" {
 // DEVICE CONFIGURATION
 // only enabled if USB OTG is supported
 //--------------------------------------------------------------------
-#if defined(CONFIG_USB_OTG_SUPPORTED) && CONFIG_USB_OTG_SUPPORTED
-#define CFG_TUD_ENABLED 1
-#else
-#define CFG_TUD_ENABLED 0
+#ifndef CFG_TUD_ENABLED
+  #if defined(CONFIG_USB_OTG_SUPPORTED) && CONFIG_USB_OTG_SUPPORTED
+  #define CFG_TUD_ENABLED 1
+  #else
+  #define CFG_TUD_ENABLED 0
+  #endif
 #endif
 
 #define CFG_TUD_CDC 2
@@ -141,10 +143,14 @@ extern "C" {
 // Host Configuration
 //--------------------------------------------------------------------
 
-// Enable host stack with MAX3421E (host shield)
+// Enable host stack using native OTG (not MAX3421E)
 #define CFG_TUH_ENABLED 1
-#define CFG_TUH_MAX3421 1
+#define CFG_TUH_MAX3421 0
 #define CFG_TUH_MAX_SPEED OPT_MODE_FULL_SPEED
+
+// Native OTG rhport mode - host at full speed
+#undef CFG_TUSB_RHPORT0_MODE
+#define CFG_TUSB_RHPORT0_MODE (OPT_MODE_HOST | OPT_MODE_FULL_SPEED)
 
 #ifndef CFG_TUH_MAX3421_ENDPOINT_TOTAL
 #define CFG_TUH_MAX3421_ENDPOINT_TOTAL (8 + 4 * (CFG_TUH_DEVICE_MAX - 1))
@@ -154,41 +160,22 @@ extern "C" {
 #define CFG_TUH_ENUMERATION_BUFSIZE 256
 
 // Number of hub devices
-#define CFG_TUH_HUB 1
+#define CFG_TUH_HUB 0
 
-// max device support (excluding hub device): 1 hub typically has 4 ports
-#define CFG_TUH_DEVICE_MAX (3 * CFG_TUH_HUB + 1)
+// max device support (excluding hub device)
+#define CFG_TUH_DEVICE_MAX 1
 
 // Enable tuh_edpt_xfer() API
 // #define CFG_TUH_API_EDPT_XFER       1
 
-// Number of mass storage
-#define CFG_TUH_MSC 1
+#define CFG_TUH_MIDI              1
+#define CFG_TUH_MIDI_RX_BUFSIZE   128
+#define CFG_TUH_MIDI_TX_BUFSIZE   128
 
-// Number of HIDs
-// typical keyboard + mouse device can have 3,4 HID interfaces
-#define CFG_TUH_HID (3 * CFG_TUH_DEVICE_MAX)
-
-// Number of CDC interfaces
-// FTDI and CP210x are not part of CDC class, only to re-use CDC driver API
-#define CFG_TUH_CDC 1
-#define CFG_TUH_CDC_FTDI 1
-#define CFG_TUH_CDC_CP210X 1
-#define CFG_TUH_CDC_CH34X 1
-
-// RX & TX fifo size
-#define CFG_TUH_CDC_RX_BUFSIZE 64
-#define CFG_TUH_CDC_TX_BUFSIZE 64
-
-// Set Line Control state on enumeration/mounted:
-// DTR ( bit 0), RTS (bit 1)
-#define CFG_TUH_CDC_LINE_CONTROL_ON_ENUM 0x03
-
-// Set Line Coding on enumeration/mounted, value for cdc_line_coding_t
-// bit rate = 115200, 1 stop bit, no parity, 8 bit data width
-// This need Pico-PIO-USB at least 0.5.1
-#define CFG_TUH_CDC_LINE_CODING_ON_ENUM                                        \
-  { 115200, CDC_LINE_CONDING_STOP_BITS_1, CDC_LINE_CODING_PARITY_NONE, 8 }
+// Disable unused host class drivers (only MIDI needed)
+#define CFG_TUH_MSC 0
+#define CFG_TUH_HID 0
+#define CFG_TUH_CDC 0
 
 #ifdef __cplusplus
 }
